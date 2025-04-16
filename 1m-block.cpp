@@ -12,8 +12,88 @@
 #include <libnetfilter_queue/libnetfilter_queue.h>
 #include <libnet.h>
 #include <regex.h>
+#include <vector>
+#include <chrono>
 
-std::unordered_map<std::string, std::string> blocklist;
+// std::unordered_map<std::string, std::string> blocklist;
+
+// bool load_blocklist(const char* filename) {
+//     std::ifstream file(filename);
+//     if (!file.is_open()) return false;
+
+//     std::string line;
+//     while (std::getline(file, line)) {
+//         size_t comma = line.find(',');
+//         if (comma != std::string::npos) {
+//             std::string domain = line.substr(comma + 1);
+//             std::string rank = line.substr(0, comma);
+//             blocklist[domain] = rank;
+//         }
+//     }
+
+//     std::cout << "Total: " << blocklist.size() << " sites\n";
+//     return true;
+// }
+
+// bool check_host(unsigned char *data, int size, std::string &matched_host) {
+//     using namespace std::chrono;
+//     auto start_time = high_resolution_clock::now();
+
+//     struct libnet_ipv4_hdr *ipv4 = (struct libnet_ipv4_hdr *) data;
+//     int ip_hdr_len = ipv4->ip_hl * 4;
+
+//     struct libnet_tcp_hdr *tcp = (struct libnet_tcp_hdr *) (data + ip_hdr_len);
+//     int tcp_hdr_len  = tcp->th_off * 4;
+
+//     int http_offset  = ip_hdr_len  + tcp_hdr_len;
+//     if (size <= http_offset) return false;
+
+//     char *http = (char *)(data + http_offset);
+
+//     if (!(strncmp(http, "GET", 3) == 0 || strncmp(http, "POST", 4) == 0 ||
+//           strncmp(http, "HEAD", 4) == 0 || strncmp(http, "PUT", 3) == 0 ||
+//           strncmp(http, "DELETE", 6) == 0 || strncmp(http, "OPTIONS", 7) == 0))
+//         return false;
+
+//     regex_t regex;
+//     regmatch_t matches[2];
+//     const char *pattern = "Host:\\s*([a-zA-Z0-9.-]+)";
+
+//     if (regcomp(&regex, pattern, REG_EXTENDED | REG_ICASE) != 0) return false;
+
+//     int result = regexec(&regex, http, 2, matches, 0);
+//     if (result == 0) {
+//         int start = matches[1].rm_so;
+//         int end = matches[1].rm_eo;
+//         int len = end - start;
+//         if (len > 0 && len < 256) {
+//             char host[256] = {0};
+//             strncpy(host, http + start, len);
+//             host[len] = '\0';
+//             std::string host_str(host);
+
+//             std::cout << "Host: " << host_str << "\n";
+
+//             if (blocklist.find(host_str) != blocklist.end()) {
+//                 std::cout << "Host is blocklist\n";
+//                 matched_host = host_str;
+
+//                 auto end_time = high_resolution_clock::now();
+//                 auto duration = duration_cast<nanoseconds>(end_time - start_time).count();
+//                 std::cout << "Search time: " << duration << " ns\n";
+
+//                 regfree(&regex);
+//                 return true;
+//             } else {
+//                 std::cout << "Host is not blocklist\n";
+//             }
+//         }
+//     }
+//     regfree(&regex);
+//     return false;
+// }
+// hash_map
+std::unordered_map<char, std::unordered_map<std::string, std::string>> blocklist_by_prefix;
 
 bool load_blocklist(const char* filename) {
     std::ifstream file(filename);
@@ -23,30 +103,41 @@ bool load_blocklist(const char* filename) {
     while (std::getline(file, line)) {
         size_t comma = line.find(',');
         if (comma != std::string::npos) {
-            std::string domain = line.substr(comma + 1);
             std::string rank = line.substr(0, comma);
-            blocklist[domain] = rank;
+            std::string domain = line.substr(comma + 1);
+            if (!domain.empty()) {
+                char prefix = tolower(domain[0]);
+                blocklist_by_prefix[prefix][domain] = rank;
+            }
         }
     }
 
-    std::cout << "[+] Blocklist loaded: " << blocklist.size() << " sites\n";
+    size_t total = 0;
+    for (const auto &entry : blocklist_by_prefix)
+        total += entry.second.size();
+
+    std::cout << "Total: " << total << " sites\n";
     return true;
 }
 
 bool check_host(unsigned char *data, int size, std::string &matched_host) {
-    std::cout << "[*] check_host() called\n";
+    using namespace std::chrono;
+    auto start_time = high_resolution_clock::now();
+
     struct libnet_ipv4_hdr *ipv4 = (struct libnet_ipv4_hdr *) data;
     int ip_hdr_len = ipv4->ip_hl * 4;
-
     struct libnet_tcp_hdr *tcp = (struct libnet_tcp_hdr *) (data + ip_hdr_len);
     int tcp_hdr_len  = tcp->th_off * 4;
 
-    int http_offset  = ip_hdr_len  + tcp_hdr_len;
+    int http_offset  = ip_hdr_len + tcp_hdr_len;
     if (size <= http_offset) return false;
 
     char *http = (char *)(data + http_offset);
 
-    if (strncmp(http, "GET", 3) != 0 && strncmp(http, "POST", 4) != 0) return false;
+    if (!(strncmp(http, "GET", 3) == 0 || strncmp(http, "POST", 4) == 0 ||
+          strncmp(http, "HEAD", 4) == 0 || strncmp(http, "PUT", 3) == 0 ||
+          strncmp(http, "DELETE", 6) == 0 || strncmp(http, "OPTIONS", 7) == 0))
+        return false;
 
     regex_t regex;
     regmatch_t matches[2];
@@ -64,22 +155,23 @@ bool check_host(unsigned char *data, int size, std::string &matched_host) {
             strncpy(host, http + start, len);
             host[len] = '\0';
             std::string host_str(host);
+            std::cout << "Host: " << host_str << "\n";
 
-            std::cout << "[*] Extracted Host: " << host_str << "\n";
-            if (blocklist.find(host_str) != blocklist.end())
-                std::cout << "[!] Host matched in blocklist\n";
-            else
-                std::cout << "[ ] Host NOT matched\n";
-
-            regfree(&regex);
-
-            if (blocklist.find(host_str) != blocklist.end()) {
+            char prefix = tolower(host_str[0]);
+            if (blocklist_by_prefix.count(prefix) &&
+                blocklist_by_prefix[prefix].find(host_str) != blocklist_by_prefix[prefix].end()) {
+                std::cout << "Host is blocklist\n";
                 matched_host = host_str;
+                auto end_time = high_resolution_clock::now();
+                auto duration = duration_cast<nanoseconds>(end_time - start_time).count();
+                std::cout << "Search time: " << duration << " ns\n";
+                regfree(&regex);
                 return true;
+            } else {
+                std::cout << "Host is not blocklist\n";
             }
         }
     }
-
     regfree(&regex);
     return false;
 }
@@ -97,10 +189,10 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 
     std::string matched;
     if (len >= 0 && check_host(packet_data, len, matched)) {
-        std::cout << "[!] Blocked: " << matched << std::endl;
+        std::cout << "Blocked: " << matched << std::endl;
         return nfq_set_verdict(qh, id, NF_DROP, 0, nullptr);
     }
-    std::cout << "[ ] Accepting packet\n";
+    std::cout << "Accepting packet\n";
     return nfq_set_verdict(qh, id, NF_ACCEPT, 0, nullptr);
 }
 
@@ -111,10 +203,17 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
+    using namespace std::chrono;
+    auto load_start = high_resolution_clock::now();
+
     if (!load_blocklist(argv[1])) {
-        std::cerr << "[-] Failed to load blocklist file\n";
+        std::cerr << "Failed to load blocklist file\n";
         exit(1);
     }
+
+    auto load_end = high_resolution_clock::now();
+    auto load_duration = duration_cast<milliseconds>(load_end - load_start).count();
+    std::cout << "Blocklist load time: " << load_duration << " ms\n";
 
     struct nfq_handle *h = nfq_open();
     if (!h) { perror("nfq_open"); exit(1); }
