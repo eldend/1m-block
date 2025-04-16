@@ -6,11 +6,14 @@ top-1m.csv파일 안에 있는 Blocklist들을 차단하는 프로그램 입니�
 ## 실행 방법
 
 <terminal>
-$g++ -o 1m-block 1m-block.cpp -lnetfilter_queue -lnet
-$sudo iptables -F
-$sudo iptables -A OUTPUT -p tcp --dport 80 -j NFQUEUE --queue-num 0
-$sudo iptables -A INPUT -p tcp --sport 80 -j NFQUEUE --queue-num 0
-$sudo ./1m-block top-1m.csv
+  
+-$g++ -o 1m-block 1m-block.cpp -lnetfilter_queue -lnet
+
+-$sudo iptables -F
+-$sudo iptables -A OUTPUT -p tcp --dport 80 -j NFQUEUE --queue-num 0
+-$sudo iptables -A INPUT -p tcp --sport 80 -j NFQUEUE --queue-num 0
+
+-$sudo ./1m-block top-1m.csv
 
 ※ curl을 통해 도메인 접속 시 차단 동작 확인 가능
 
